@@ -29,7 +29,7 @@ sv = Service(
     use_priv=priv.ADMIN,  # 默认指令需要管理员权限
     manage_priv=priv.ADMIN,
     visible=True,
-    enable_on_default=False,
+    enable_on_default=True,
     bundle="娱乐",
     help_=sv_help
 )
