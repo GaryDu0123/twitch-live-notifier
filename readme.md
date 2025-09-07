@@ -69,7 +69,7 @@ TWITCH_DISABLE_SENSITIVE_FILTER = True
 
 #### 步骤 4: 启用插件
 
-1.  在 `ENABLE_SERVICES` 列表中，添加 `twitch-live-notifier`。
+1.  在 `MODULES_ON` 列表中，添加 `twitch-live-notifier`。
     ```python
     ENABLE_SERVICES = [
         'your_other_service',
