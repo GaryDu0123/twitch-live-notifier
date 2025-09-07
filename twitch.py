@@ -6,9 +6,16 @@ import re
 from typing import Optional, List, Dict, Any
 import base64
 import aiohttp
-from hoshino import Service, priv
+from hoshino import Service, priv, util
 from hoshino.typing import CQEvent, HoshinoBot
-from .config import TWITCH_APP_ID, TWITCH_APP_SECRET, TWITCH_CHECK_INTERVAL, TWITCH_PROXY_URL
+from .config import (
+    TWITCH_APP_ID,
+    TWITCH_APP_SECRET,
+    TWITCH_CHECK_INTERVAL,
+    TWITCH_PROXY_URL,
+    TWITCH_SEND_IMAGE,
+    TWITCH_DISABLE_SENSITIVE_FILTER
+)
 
 sv_help = """
 [添加twitch订阅 主播ID] 添加一位主播的Live提醒
@@ -146,7 +153,6 @@ class TwitchAPIClient:
             await self._ensure_token_valid()
             session = await self._create_session()
             headers = {"Client-ID": self.app_id, "Authorization": f"Bearer {self._access_token}"}
-            # 注意: 此处的参数是 'login'
             params = [("login", login) for login in user_logins]
             # https://dev.twitch.tv/docs/api/reference/#get-users
             async with session.get(f"{TWITCH_API_BASE_URL}/users", headers=headers, params=params,
@@ -179,13 +185,12 @@ async def add_twitch_sub(bot: HoshinoBot, ev: CQEvent):
     streamer_id = ev.message.extract_plain_text().strip().lower()
 
     if not re.fullmatch(r"^[a-zA-Z0-9][a-zA-Z0-9_]{3,24}$", streamer_id):
-        await bot.send(ev, "请输入有效的 Twitch 主播ID！\n(4-25个字符，只能是字母、数字或下划线，且不能以下划线开头)")
+        await bot.send(ev, "请输入有效的 Twitch 主播ID！")
         return
 
     group_subs = _load_json(GROUP_SUBS_FILE, {})
     streamer_subs = _load_json(STREAMER_SUBS_FILE, {})
 
-    # 使用从API获取的、经过验证的 actual_login
     if streamer_id in group_subs.get(gid, []):
         await bot.send(ev, f"本群已经订阅了主播: {streamer_id}")
         return
@@ -196,7 +201,6 @@ async def add_twitch_sub(bot: HoshinoBot, ev: CQEvent):
         if user_data_list is None:
             await bot.send(ev, "验证失败，无法连接到 Twitch API，请稍后再试。")
             return
-
         if not user_data_list:
             await bot.send(ev, f"未找到名为 '{streamer_id}' 的Twitch主播，请检查ID是否拼写正确。")
             return
@@ -218,7 +222,6 @@ async def add_twitch_sub(bot: HoshinoBot, ev: CQEvent):
     _save_json(group_subs, GROUP_SUBS_FILE)
     _save_json(streamer_subs, STREAMER_SUBS_FILE)
 
-    # 发送更友好的成功提示
     await bot.send(ev, f"✅ 订阅成功！\n将接收 {actual_display_name} ({actual_id}) 的开播通知。")
 
 
@@ -270,6 +273,34 @@ async def list_twitch_subs(bot: HoshinoBot, ev: CQEvent):
 # ============================================================================
 # 定时检查任务
 # ============================================================================
+async def _get_thumbnail_as_cq_image_text(
+        session: aiohttp.ClientSession,
+        stream_data: Dict[str, Any]
+) -> str:
+    """
+    下载直播封面图，转换为Base64并返回CQ码字符串。
+    如果失败，则返回空字符串。
+    """
+    thumbnail_url = stream_data.get('thumbnail_url', '').replace('{width}', '320').replace('{height}', '180')
+    if not thumbnail_url:
+        return ""
+
+    try:
+        # 使用传入的 session 和配置的代理来下载图片
+        async with session.get(thumbnail_url, proxy=TWITCH_PROXY_URL, timeout=10) as response:
+            if response.status == 200:
+                image_bytes = await response.read()
+                base64_str = base64.b64encode(image_bytes).decode('utf-8')
+                return f"[CQ:image,file=base64://{base64_str}]"
+            else:
+                sv.logger.warning(
+                    f"下载直播封面图失败 ({stream_data.get('user_login', 'N/A')}), HTTP状态码: {response.status}")
+                return ""
+    except Exception as e:
+        sv.logger.error(f"下载直播封面图时发生网络错误 ({stream_data.get('user_login', 'N/A')}): {e}")
+        return ""
+
+
 @sv.scheduled_job('interval', minutes=TWITCH_CHECK_INTERVAL)
 async def twitch_monitor_task():
     bot = sv.bot
@@ -294,43 +325,23 @@ async def twitch_monitor_task():
         sv.logger.info("Twitch监控：没有新开播的主播。")
     else:
         sv.logger.info(f"Twitch监控：检测到 {len(newly_started)} 位新开播的主播: {', '.join(newly_started)}")
-        # 在循环外获取一次 aiohttp session，提高效率
         session = await twitch_client._create_session()
 
         for stream in streams_data:
             streamer_login = stream['user_login'].lower()
             if streamer_login in newly_started:
-                # 构建不含图片的基础消息
-                msg_text = (
+                # 构建基础文本消息
+                final_msg = (
                     f"【Twitch 开播提醒】🎉\n"
                     f"主播: {stream['user_name']} ({stream['user_login']})\n"
-                    f"标题: {stream['title']}\n"
+                    f"标题: {stream['title'] if TWITCH_DISABLE_SENSITIVE_FILTER else util.filt_message(stream['title'])}\n"
                     f"游戏: {stream['game_name']}\n"
                     # f"链接: https://www.twitch.tv/{streamer_login}"
                 )
 
-                # 尝试下载封面图并转为 Base64
-                base64_str = ""
-                thumbnail_url = stream.get('thumbnail_url', '').replace('{width}', '320').replace('{height}', '180')
-                if thumbnail_url:
-                    try:
-                        # 使用之前获取的 session 和配置的代理来下载图片
-                        async with session.get(thumbnail_url, proxy=TWITCH_PROXY_URL, timeout=10) as response:
-                            if response.status == 200:
-                                image_bytes = await response.read()
-                                # 编码为 base64 字符串
-                                base64_str = base64.b64encode(image_bytes).decode('utf-8')
-
-                            else:
-                                sv.logger.warning(
-                                    f"下载直播封面图失败 ({streamer_login}), HTTP状态码: {response.status}")
-                    except Exception as e:
-                        sv.logger.error(f"下载直播封面图时发生网络错误 ({streamer_login}): {e}")
-
-                # 组合最终消息 (如果图片下载成功，则附加图片 CQ 码)
-                final_msg = msg_text
-                if base64_str != "":
-                    final_msg = msg_text + f"[CQ:image,file=base64://{base64_str}]"
+                # 根据配置决定是否获取图片
+                if TWITCH_SEND_IMAGE:
+                    final_msg += await _get_thumbnail_as_cq_image_text(session, stream)
 
                 # 向所有订阅了该主播的群组发送通知
                 subscribed_groups = streamer_subs.get(streamer_login, [])
