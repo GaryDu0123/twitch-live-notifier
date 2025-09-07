@@ -131,7 +131,7 @@ class TwitchAPIClient:
                     if response.status == 401:
                         sv.logger.warning("Twitch API返回401，将强制刷新令牌后重试...")
                         await self._renew_token()
-                        return await self.get_streams(user_logins)  # 重试整个请求
+                        return None  # 等待下一个周期重试
                     response.raise_for_status()
                     data = await response.json()
                     all_streams_data.extend(data.get("data", []))
@@ -160,7 +160,7 @@ class TwitchAPIClient:
                 if response.status == 401:
                     sv.logger.warning("Twitch API (users) 返回401，将强制刷新令牌后重试...")
                     await self._renew_token()
-                    return await self.get_users(user_logins)  # 重试
+                    return None  # 等待下次重试
                 response.raise_for_status()
                 data = await response.json()
                 return data.get("data", [])
