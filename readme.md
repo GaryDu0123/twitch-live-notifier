@@ -12,7 +12,7 @@
 所有指令默认都需要**群主或管理员**权限才能触发。
 
 * **添加twitch订阅 <主播ID>**
-  *   示例: `添加twitch订阅 `
+  *   示例: `添加twitch订阅 nacho_dayo`
   *   说明: `主播ID` 是其个人频道 URL 中的那部分，例如 `twitch.tv/nacho_dayo` 中的 `nacho_dayo`。
 
 * **取消twitch订阅 <主播ID>**
