@@ -4,6 +4,9 @@
 
 可以定时检查群内所订阅的 Twitch 主播是否开播，并在主播上线时向群内发送一条开播通知。
 
+<img width="350" alt="image" src="https://github.com/user-attachments/assets/c952a65f-7c4f-4959-98f0-d0564abf6b95" />
+
+
 ## 📖 使用说明
 
 所有指令默认都需要**群主或管理员**权限才能触发。
